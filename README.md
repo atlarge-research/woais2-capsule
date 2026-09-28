@@ -1,5 +1,17 @@
 # Artifact Appendix
 
+<p align="center">
+  <img src="previews/00_failure_rates_by_category.png" width="100%" alt="Failure ratios per batch size, sequence length, GPU model, and fine-tuning method">
+</p>
+<p align="center">
+  <img src="previews/03_performance_vs_batch_size.png" width="24%" alt="Median throughput per batch size on one GPU">
+  <img src="previews/08_workload_characteristics.png" width="24%" alt="Median throughput per batch size and sequence length">
+  <img src="previews/03_insights_method_scaling.png" width="24%" alt="Median throughput per number of GPUs">
+  <img src="previews/07_optimization_roi.png" width="24%" alt="Median speedup of three optimizations">
+</p>
+
+*The paper's figures that the capsule regenerates (previews; the full-resolution PDFs go to `out/figures/`).*
+
 ## Abstract
 
 This artifact is a small Python capsule that regenerates every dataset-derived number, table and figure of the
