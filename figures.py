@@ -1,12 +1,14 @@
 """The paper's figures (Figs. 2-6), one function each: the data reproduce.py computed go in; the figure and its plotted
 values come out. reproduce.py lists them in FIGURES under the paper's file names; check.py pins each one's page size,
-fonts, matplotlib version and plotted values.
+drawing, fonts, matplotlib version and plotted values.
 
 The paper's PDFs were drawn with matplotlib 3.11.0 in Times New Roman (regular and bold, embedded as TrueType). With
-both, these functions draw the paper's figures operator for operator. Another build of Times New Roman changes only
-the embedded font program: Debian's ttf-mscorefonts-installer (font version 2.82, used by the Docker image) has the
-same glyphs and advance widths as the paper's font (version 5.01), so its PDFs render pixel for pixel like the
-paper's. matplotlib 3.10 lays out text differently (labels move by up to 1.7 pt), and without Times New Roman
+both, these functions draw the paper's figures object for object (check.py compares every object but the font
+program). Another build of Times New Roman changes the embedded font program: Debian's ttf-mscorefonts-installer
+(font version 2.82, used by the Docker image) has the same glyph outlines and advance widths as the paper's font
+(version 5.01) but other hinting instructions, so its PDFs render pixel for pixel like the paper's, except in
+renderers that apply the hinting at screen resolution (e.g. Ghostscript below about 120 dpi: a few pixels of some
+letters). matplotlib 3.10 lays out text differently (labels move by up to 1.7 pt), and without Times New Roman
 matplotlib would silently draw in another font, so render() refuses to draw without it.
 """
 import hashlib

@@ -1,5 +1,6 @@
 # The reproducibility capsule in a container: `make docker` builds this image and runs it with ./out mounted.
-FROM python:3.11-slim
+# python:3.11-slim (Python 3.11.16, Debian 13), pinned by the digest of its multi-platform index (x86-64 and arm64).
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
 
 # Same settings as the Makefile. Agg is load-bearing: other matplotlib backends write narrower PDFs than declared.
 # Caches live in /tmp so that the container can run as the host user (docker run --user), who owns ./out.

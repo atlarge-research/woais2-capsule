@@ -7,7 +7,8 @@ VENV := .venv
 PY := $(VENV)/bin/python
 
 # Agg is load-bearing: other matplotlib backends write narrower PDFs than declared.
-# All caches stay inside this folder; `datasets` logs only errors (its cache warning prints a local path).
+# All caches stay inside this folder. `datasets` logs only errors, but still prints its cache folder (a local path)
+# when it downloads the dataset; no output file holds a path.
 export MPLBACKEND := Agg
 export MPLCONFIGDIR := $(CURDIR)/.cache/matplotlib
 export HF_HOME := $(CURDIR)/.cache/huggingface

@@ -40,7 +40,7 @@ import figures
 
 warnings.filterwarnings("ignore", message="The 'verbose' keyword in pd.read_csv is deprecated")
 
-# ── data: the public dataset, loaded as its card shows; the only data source ─────────────────────────────────
+# ── data: the public dataset, loaded as its Hub page shows (Use this dataset); the only data source ──────────
 import datasets
 datasets.disable_progress_bar()         # its row counter is throttled (it stops at 30,000); rows are counted below
 from datasets import load_dataset
@@ -75,10 +75,11 @@ TPS, MEM = "dataset_tokens_per_second", "gpu_memory_utilization_peak"
 GPU = {"NVIDIA-A100-SXM4-80GB": ("A100-SXM", 80), "NVIDIA-A100-80GB-PCIe": ("A100-PCIe", 80),
        "L40S": ("L40S", 48), "NVIDIA-H100-PCIe": ("H100-PCIe", 80)}
 METHOD = {"full": "Full", "lora": "LoRA", "gptq-lora": "GPTQ-LoRA"}
-# Total parameters [B] per LLM, from the model cards (mixture-of-experts models: total, not active).
+# Total parameters [B] per LLM, from the model cards (mixture-of-experts models: total, not active). The Granite
+# 3.0, 3.1 and 3.3 8B models share one architecture; their cards give 8.1B.
 PARAMS_B = {
-    "allam-1-13b": 13, "granite-13b-v2": 13, "granite-20b-v2": 20, "granite-3-8b": 8, "granite-3.1-2b": 2.5,
-    "granite-3.1-3b-a800m-instruct": 3.3, "granite-3.1-8b-instruct": 8.1, "granite-3.3-8b": 8.2,
+    "allam-1-13b": 13, "granite-13b-v2": 13, "granite-20b-v2": 20, "granite-3-8b": 8.1, "granite-3.1-2b": 2.5,
+    "granite-3.1-3b-a800m-instruct": 3.3, "granite-3.1-8b-instruct": 8.1, "granite-3.3-8b": 8.1,
     "granite-34b-code-base": 34, "granite-3b-code-base-128k": 3, "granite-4.0-1b": 1.6, "granite-4.0-350m": 0.35,
     "granite-4.0-h-1b": 1.5, "granite-4.0-h-micro": 3, "granite-4.0-h-small": 32, "granite-4.0-h-tiny": 7,
     "granite-4.0-micro": 3, "granite-7b-base": 7, "granite-8b-code-base": 8, "granite-8b-japanese": 8,
@@ -300,7 +301,7 @@ sq = FAIL["seq"]                                                   # 512 to 8,19
 fs, rs, js = (100 * sq[c] / sq.runs for c in ("failing", "runtime", "rejected"))
 put("FailSeqRange", [fs.iloc[0], fs.iloc[-1]], f"{fs.iloc[0]:.0f}% → {fs.iloc[-1]:.0f}%",
     "failure ratio at the shortest and at the longest sequence length (512 and 8,192 tokens per sample) [%]")
-put("RuntimeSeqRange", [rs.iloc[0], rs.iloc[-1]], f"{rs.iloc[0]:.0f}% → {rs.iloc[-1]:.0f}%",
+put("RuntimeSeqRange", [rs.iloc[0], rs.iloc[-1]], f"{rs.iloc[0]:.0f}% to {rs.iloc[-1]:.0f}%",
     "share of the experiments that failed at runtime, at 512 and at 8,192 tokens per sample [%]")
 put("RejectedSeqRange", [js.min(), js.max()], span_text(js.min(), js.max(), "{:.0f}") + "%",
     "share of the experiments rejected before launch, lowest to highest over the five sequence lengths [%]")
@@ -430,8 +431,9 @@ top = V[(V.batch_size == hi[0]) & (V.tokens_per_sample == hi[1])].number_gpus.as
 put("HeatmapMaxGpus", sorted(set(top)), " or ".join(map(str, sorted(set(top)))),
     "GPU counts of the valid runs in the largest cell", runs={int(g): int(k) for g, k in top.value_counts().items()})
 put("NValid", len(V), f"{len(V):,}", "valid runs (the data of Fig. 4)")
-put("HeatmapCorners", [list(lo), list(hi)], f"smallest ({lo[0]:,}, {lo[1]:,}), largest ({hi[0]:,}, {hi[1]:,})",
-    "Fig. 4: the cells with the smallest and the largest median throughput (batch size, sequence length)")
+for name, (b, q), which in (("HeatmapMinCell", lo, "smallest"), ("HeatmapMaxCell", hi, "largest")):
+    put(name, [b, q], f"({b:,}, {q:,})", f"Fig. 4: the cell with the {which} median throughput (batch size, "
+        "sequence length)")
 put("Cell512x8192", [int(n_all.loc[512, 8192]), int(n_valid.loc[512, 8192])],
     f"{int(n_all.loc[512, 8192]):,} experiments, {int(n_valid.loc[512, 8192])} valid",
     "Fig. 4, batch size 512 at 8,192 tokens per sample: experiments, valid runs")
@@ -542,6 +544,12 @@ for c, name in (("B", "Capped"), ("A", "Uncapped")):
         f"{2 * e['Tcp'].median():.2f}× without RoCE, {2 * e['Roce'].median():.2f}× with RoCE ({len(e['Tcp'])} pairs "
         "each)", f"throughput gain 16->32 GPUs at equal per-GPU batch, campaign {c}",
         **{n: spread(s) for n, s in e.items()})
+b16 = {net: EFF[(16, net)]["B"].median() for net in ("Tcp", "Roce")}
+for net, name in (("Tcp", "without"), ("Roce", "with")):
+    put(f"Gain16to32Capped{net}", 2 * b16[net], f"{2 * b16[net]:.2f}×",
+        f"throughput gain 16->32 GPUs {name} RoCE at equal per-GPU batch, campaign B (runs capped at 600 s)")
+put("WeakEff16to32Capped", list(b16.values()), span_text(min(b16.values()), max(b16.values()), "{:.2f}"),
+    "weak-scaling efficiency 16->32 GPUs, campaign B (runs capped at 600 s), without and with RoCE")
 
 # ── Sec. 3.4 and Fig. 6: optimizations ─────────────────────────────────────────────────────────────────────────
 roce = speedup(df[multi], "enable_roce", 0, 1)

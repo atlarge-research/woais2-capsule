@@ -3,27 +3,32 @@
 - The data are the ones the paper analyzed: same shape and content hash, so an upstream change fails loudly.
 - PAPER holds every dataset-derived number the paper prints, in its text, tables and captions and inside its figures
   (Table 2 prints none), as a reader sees it (the times sign as ×, a double hyphen as an en dash, a thin space as a
-  space). A number that the data give differently fails the check: the paper must print the reproduced text instead;
-  correct the paper, then its entry here.
+  space, and a thin space between digits, as in '8\\,192', as the comma that groups digits elsewhere in the paper).
+  A number that the data give differently fails the check: the paper must print the reproduced text instead; correct
+  the paper, then its entry here.
 - SUPPORT pins the numbers the paper does not print (the evidence behind its wording); NUMBERS_SHA256 pins every
   recorded value, pair count and IQR. A change there means that the data or the code changed.
-- FIGURES pins each figure's page size and plotted values. Every figure must also embed the paper's fonts (Times New
-  Roman, regular and bold) and be written by the matplotlib version that drew the paper's figures (3.11.0): another
-  version or font moves the text although the page and the plotted values stay the same.
+- FIGURES pins each figure's page size, plotted values and drawing: every object of its PDF except the embedded font
+  program and its descriptor, as the paper's figure file holds them, so a figure passes only if it draws what the
+  paper's does. Every figure must also embed the paper's fonts (Times New Roman, regular and bold) and be written by
+  the matplotlib version that drew the paper's figures (3.11.0).
 """
 import hashlib
 import json
 import re
 import sys
+import zlib
 from pathlib import Path
 
 ROWS, COLUMNS = 30920, 38
-# reproduce.content_sha256() of the data as load_dataset() parses them. pandas' CSV parser reads about 5% of the floats
-# one or two units in the last place differently on Linux (the Docker image, on x86-64 and arm64 alike) than on macOS,
-# so the hash has one value per platform; every reproduced number and figure is the same on both.
-DATA_SHA256 = {"cf8c758cb87335581e6986aee2d369bb6e75f59211c52e1cf010626e9cfeef1c": "Linux, as in the Docker image",
-               "c0e844afc793f4a9104eed2cd36241597a760fea05668db11cb39987734e52b2": "macOS"}
-NUMBERS_SHA256 = "7b7c17b89740010b2bc2b75b3a08a0949f842c8464d79e3725c8107e462e8dea"  # numbers.json, meanings aside
+# reproduce.content_sha256() of the data as load_dataset() parses them. pandas' CSV parser reads about 2% of the float
+# values (7,270 of 423,248) one or two units in the last place differently on macOS on Apple silicon than on Linux
+# (the Docker image, on x86-64 and arm64 alike) and on macOS on Intel, so the hash has two values; every reproduced
+# number and figure is the same on all of them.
+DATA_SHA256 = {"cf8c758cb87335581e6986aee2d369bb6e75f59211c52e1cf010626e9cfeef1c":
+               "Linux, as in the Docker image, or macOS on Intel",
+               "c0e844afc793f4a9104eed2cd36241597a760fea05668db11cb39987734e52b2": "macOS on Apple silicon"}
+NUMBERS_SHA256 = "649e6c6d013ee6dbf810f1754ffb922eb018eb057dafe4846ba81b2bb98917a0"  # numbers.json, meanings aside
 
 PAPER = {  # number: (the text the paper prints, where)
     "NRuns": ("30,920", "Abstract; Sec. 1; Sec. 2 'Data processing'; Tab. 1; Fig. 1"),
@@ -59,6 +64,8 @@ PAPER = {  # number: (the text the paper prints, where)
     "FailBatch16": ("44%", "Sec. 3.1 'Failures vs. Batch sizes'"),
     "FailBatch1024": ("95%", "Abstract; Sec. 1; Finding 1; Sec. 3.1 'Failures vs. Batch sizes'"),
     "FailPctBatchMid": ("52%", "Abstract; Sec. 1"),
+    "RuntimeSeqRange": ("21% to 46%", "Sec. 3.1 'Failures vs. Sequence Lengths'"),
+    "RejectedSeqRange": ("26-31%", "Sec. 3.1 'Failures vs. Sequence Lengths'"),
     "FailGpuL40S": ("69% (739)", "Fig. 2 caption; Sec. 3.1 'Failures vs. GPU Type'"),
     "NRunsL40S": ("1,068", "Sec. 3.1 'Failures vs. GPU Type'"),
     "RuntimePctL40S": ("54%", "Sec. 3.1 'Failures vs. GPU Type'"),
@@ -82,6 +89,8 @@ PAPER = {  # number: (the text the paper prints, where)
     "SxmHigherThroughput": ("18%", "Sec. 3.2 'Throughput vs. GPU type'"),
     "HeatmapMin": ("1.4k", "Sec. 3.2 'Throughput vs. sequence length'"),
     "HeatmapMax": ("75k", "Sec. 3.2 'Throughput vs. sequence length'"),
+    "HeatmapMinCell": ("(1, 512)", "Sec. 3.2 'Throughput vs. sequence length'"),
+    "HeatmapMaxCell": ("(128, 8,192)", "Sec. 3.2 'Throughput vs. sequence length' (typeset '8\\,192')"),
     "HeatmapMaxGpus": ("16 or 32", "Sec. 3.2 'Throughput vs. sequence length'"),
     "NValid": ("11,381", "Fig. 4 caption"),
     "GpusPerNode": ("8", "Fig. 5 caption ('1 node = 8 GPUs'); Sec. 3.3; Finding 4"),
@@ -94,6 +103,9 @@ PAPER = {  # number: (the text the paper prints, where)
     "WeakEff8to16CappedRoce": ("0.72", "Abstract; Sec. 1; Finding 4"),
     "Gain8to16CappedRoce": ("1.45×", "Sec. 3.3 'Across nodes'"),
     "Gain8to16CappedTcp": ("0.52×", "Sec. 3.3 'Across nodes'"),
+    "Gain16to32CappedTcp": ("1.88×", "Sec. 3.3 'Across nodes' (16 to 32 GPUs)"),
+    "Gain16to32CappedRoce": ("1.90×", "Sec. 3.3 'Across nodes' (16 to 32 GPUs)"),
+    "WeakEff16to32Capped": ("0.94-0.95", "Sec. 3.3 'Across nodes' (16 to 32 GPUs: 'measured efficiency at 0.94-0.95')"),
     "VersionUncapped": ("2.4.0", "Sec. 3.3 'Across nodes'"),
     "VersionCapped": ("2.7.1", "Sec. 3.3 'Across nodes'"),
     "TimeCap": ("600 s", "Sec. 3.3 'Across nodes'; Sec. 3.4; Findings 4 and 5"),
@@ -236,8 +248,6 @@ SUPPORT = {  # number: (the text reproduced when this was recorded, what it supp
     "FailSplitSeq8192": ("failing 76.2%, rejected 30.7%, runtime 45.5%", SPLIT),
     "FailSeqRange": ("51% → 76%",
                      "Sec. 3.1 'Failures vs. Sequence Lengths': 'failures grow with sequence length' (Fig. 2b)"),
-    "RuntimeSeqRange": ("21% → 46%", "Sec. 3.1 'Failures vs. Sequence Lengths': the growth is in runtime failures"),
-    "RejectedSeqRange": ("26-31%", "Sec. 3.1 'Failures vs. Sequence Lengths': rejections stay flat"),
     "FailMethodAll": ("Full 67%, LoRA 58%, GPTQ-LoRA 60%",
                       "Sec. 3.1 'Failures vs. fine-tuning method': 'LoRA and GPTQ-LoRA ... fail less often'"),
     "LogFitA100SXM": ("R² 0.97, +967 tokens/s per doubling", LOG),
@@ -259,8 +269,6 @@ SUPPORT = {  # number: (the text reproduced when this was recorded, what it supp
                           "Sec. 3.2 'Throughput vs. GPU type': 'faster than A100-PCIe in all 49 pairs'"),
     "NoH100Pairs": ("0 with A100-SXM, 0 with A100-PCIe, 0 with L40S",
                     "Sec. 3.2 'Throughput vs. GPU type': 'no identical job on H100 and another device'"),
-    "HeatmapCorners": ("smallest (1, 512), largest (128, 8,192)",
-                       "Sec. 3.2 'Throughput vs. sequence length': from (1, 512) to (128, 8,192)"),
     "Cell512x8192": ("505 experiments, 0 valid",
                      "Fig. 4 (blank cell); Sec. 3.2: 'increasing further leads to unfeasible, failing jobs'"),
     "EightGpusTwoNodes": ("36 experiments (19 valid) in 1 experiment_id",
@@ -275,9 +283,9 @@ SUPPORT = {  # number: (the text reproduced when this was recorded, what it supp
     "Eff8to16UncappedArms": ("without RoCE 0.98 (1.95×), with RoCE 0.98 (1.96×), 108 pairs each",
                              "Finding 4 '0.98'; Sec. 3.3 '1.96×, with and without RoCE': per network"),
     "Gain16to32Capped": ("1.88× without RoCE, 1.90× with RoCE (102 pairs each)",
-                         "Sec. 3.3 'Across nodes': the next doubling (2 to 4 nodes), runs capped at 600 s"),
+                         "Sec. 3.3 'Across nodes': the pairs behind 16 to 32 GPUs, runs capped at 600 s"),
     "Gain16to32Uncapped": ("1.92× without RoCE, 1.94× with RoCE (68 pairs each)",
-                           "Sec. 3.3 'Across nodes': the next doubling (2 to 4 nodes), runs without a time limit"),
+                           "Sec. 3.3 'Across nodes': 16 to 32 GPUs (2 to 4 nodes), runs without a time limit"),
     "RoceUncapped4Nodes8B": ("granite-3.1-8b-instruct 1.01× (30 pairs), llama3.1-8b 1.03× (29 pairs)",
                              "Sec. 3.4 'System-level, RoCE': 'On 4 nodes, only Llama-3.1-70B and Mixtral-8x7B gain'"),
     "RoceByNodesUncapped": ("2 nodes 1.01× (112 pairs), 4 nodes 1.40× (129 pairs)",
@@ -299,20 +307,74 @@ SUPPORT = {  # number: (the text reproduced when this was recorded, what it supp
 FONTS = {"TimesNewRomanPSMT", "TimesNewRomanPS-BoldMT"}      # PostScript names of the fonts the figures embed
 PRODUCER = "Matplotlib pdf backend v3.11.0"                   # the writer of the paper's figure PDFs
 COLUMN = 240.04                                               # [pt] the paper's column width
-FIGURES = {  # file: (page size [pt], SHA-256 of its plotted values in numbers.json)
+FIGURES = {  # file: (page size [pt], SHA-256 of its plotted values in numbers.json, drawing() of the paper's file)
     "00_failure_rates_by_category": ((457.86, 129.01),
-                                     "0b3d6f7db79dd52d91d5b0c5ccebdc580de18183810101edaca27477074d0fa4"),
+                                     "0b3d6f7db79dd52d91d5b0c5ccebdc580de18183810101edaca27477074d0fa4",
+                                     "913194b04505b86f06f1b032b6dfc27a555dda522de02c47ca22f7e8d9ee66e8"),
     "03_performance_vs_batch_size": ((COLUMN, 100.8),
-                                     "393977e9be09b8470b53f8f7f30643346194a3bec09d3ae6a6b53462160a88de"),
+                                     "393977e9be09b8470b53f8f7f30643346194a3bec09d3ae6a6b53462160a88de",
+                                     "42a768f5eb54dc90a1b0e503783460ae8a954fe5fecd36a71f6cbcc0a81809b3"),
     "08_workload_characteristics": ((COLUMN, 115.2),
-                                    "900bac53f4b1907dccdcfb94b53d7c73dcaf8af608d39b28d1185138be2ca2d3"),
+                                    "900bac53f4b1907dccdcfb94b53d7c73dcaf8af608d39b28d1185138be2ca2d3",
+                                    "567039511108f895e5116563d8b904f5fcc0a1040741cfdf26398a27f959abee"),
     "03_insights_method_scaling": ((COLUMN, 100.8),
-                                   "81cbd8a734907808a8c8976478b6c6ec1fee80c0fe88e2c2d5edcc542fd502f4"),
+                                   "81cbd8a734907808a8c8976478b6c6ec1fee80c0fe88e2c2d5edcc542fd502f4",
+                                   "8070f42f89f62e01723e8a222bf0bb24137a17293f2e49eb58b6248a2bdf1b44"),
     "07_optimization_roi": ((COLUMN, 183.6),
-                            "50f816094b5dccab3e57852ca0a26be8b92ce792d0dcb16880077c99dd2f650e"),
+                            "50f816094b5dccab3e57852ca0a26be8b92ce792d0dcb16880077c99dd2f650e",
+                            "44f4d4dbc68c877e6202278a4ad5647b6652726c8fefd34f994907e8286b92c9"),
 }
 
 sha = lambda obj: hashlib.sha256(json.dumps(obj, sort_keys=True).encode()).hexdigest()
+
+
+def pdf_objects(body):
+    """Object number -> (its dictionary or value, its decoded stream or None) of a PDF written by matplotlib."""
+    start = int(re.search(rb"startxref\s+(\d+)\s+%%EOF\s*$", body).group(1))
+    table = body[start:body.index(b"trailer", start)]
+    offsets = {num: int(off) for num, (off, used) in enumerate(re.findall(rb"(\d{10}) \d{5} ([nf])", table))
+               if used == b"n"}
+    objs = {}
+    for num, off in offsets.items():
+        head = re.match(rb"(\d+) 0 obj\s*", body[off:])
+        assert head and int(head.group(1)) == num, f"object {num} is not at its xref offset"
+        pos = off + head.end()
+        end, stream = body.index(b"endobj", pos), body.find(b">>\nstream\n", pos)
+        if stream == -1 or stream > end:
+            objs[num] = (body[pos:end].strip(), None)
+            continue
+        d, first = body[pos:stream + 2], stream + len(b">>\nstream\n")
+        size = re.search(rb"/Length (\d+)( 0 R)?", d)
+        n = int(size.group(1))
+        if size.group(2):                                               # an indirect length: another object
+            n = int(re.match(rb"\d+ 0 obj\s*(\d+)\s*endobj", body[offsets[n]:]).group(1))
+        data = body[first:first + n]
+        objs[num] = (d, zlib.decompress(data) if b"/FlateDecode" in d else data)
+    return objs
+
+
+def drawing(body):
+    """SHA-256 of what a figure's PDF draws: every object, its stream decoded, except the embedded font program and its
+    descriptor (both differ between builds of Times New Roman), the stream lengths (they depend on the compressor)
+    and the file's metadata. A reference names the font it points to, or nothing, so neither object numbers nor the
+    order in which the fonts are written matter."""
+    objs = pdf_objects(body)
+    lengths = {int(n) for d, _ in objs.values() for n in re.findall(rb"/Length (\d+) 0 R", d)}
+    fonts = {num: b"font:" + m.group(1) for num, (d, _) in objs.items()
+             if (m := re.search(rb"/Subtype /Type0 /BaseFont /(?:[A-Z]{6}\+)?(\S+)", d))}
+    items = []
+    for num, (d, data) in objs.items():
+        if num in lengths or re.search(rb"/Length1 |/Type /FontDescriptor|/Producer ", d):
+            continue
+        d = re.sub(rb"(\d+) 0 R", lambda m: fonts.get(int(m.group(1)), b"R"), re.sub(rb"/Length \d+( 0 R)?", b"", d))
+        t = d.split()
+        if t[:1] == [b"<<"] and t[-1:] == [b">>"] and len(t) % 2 == 0 and all(
+                k.startswith(b"/") and v[:1] not in b"<[/" for k, v in zip(t[1:-1:2], t[2:-1:2])):
+            t = [b"<<", *(x for kv in sorted(zip(t[1:-1:2], t[2:-1:2])) for x in kv), b">>"]    # e.g. /F1 and /F2
+        items.append(hashlib.sha256(b" ".join(t) + b"\0" + (b"-" if data is None else b"+" + data)).hexdigest())
+    return hashlib.sha256("\n".join(sorted(items)).encode()).hexdigest()
+
+
 out = json.loads(Path("out/numbers.json").read_text(encoding="utf-8"))
 data, numbers, figures = out["dataset"], out["numbers"], out["figures"]
 paper, drift = [], []                     # where the paper differs | where the reproduction differs from its record
@@ -336,7 +398,7 @@ if fingerprint != NUMBERS_SHA256:
 found = sorted(p.stem for p in Path("out/figures").glob("*.pdf"))
 if found != sorted(FIGURES):
     drift.append(f"out/figures holds {found}, expected {sorted(FIGURES)}")
-for name, (size, values_sha256) in FIGURES.items():
+for name, (size, values_sha256, drawing_sha256) in FIGURES.items():
     pdf, fig = Path(f"out/figures/{name}.pdf"), figures.get(name)
     if not pdf.is_file() or fig is None:
         drift.append(f"figure {name}: no PDF or no plotted values")
@@ -346,13 +408,18 @@ for name, (size, values_sha256) in FIGURES.items():
     page = tuple(round(float(v), 2) for v in box.group(1).split()[2:]) if box else None
     fonts = {f.decode() for f in re.findall(rb"/BaseFont /(?:[A-Z]{6}\+)?([\w-]+)", body)}
     producer = re.search(rb"/Producer \(([^)]*)\)", body)
+    try:
+        drawn = drawing(body)
+    except (AttributeError, AssertionError, KeyError, ValueError, zlib.error) as e:   # not laid out as matplotlib's
+        drawn = f"unreadable ({e!r})"
     checks = {"written by this run": hashlib.sha256(body).hexdigest() == fig["pdf_sha256"],
               f"page {size[0]} x {size[1]} pt": page == size,
+              "drawn as the paper's figure": drawn == drawing_sha256,
               "fonts Times New Roman": fonts == FONTS,
               "written by matplotlib 3.11.0": producer is not None and producer.group(1).decode() == PRODUCER,
               "plotted values as recorded": sha(fig["data"]) == values_sha256}
     print(f"{'ok' if all(checks.values()) else 'DIFFERS':8} figure {name:30} " + "; ".join(checks))
-    drift += [f"figure {name}: not {c} (page {page}, fonts {sorted(fonts)}, "
+    drift += [f"figure {name}: not {c} (page {page}, drawing sha256 {drawn}, fonts {sorted(fonts)}, "
               f"{producer.group(1).decode() if producer else 'no producer'}, plotted values sha256 {sha(fig['data'])})"
               for c, passed in checks.items() if not passed]
 
