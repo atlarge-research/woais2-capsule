@@ -1,18 +1,32 @@
-"""The paper's figures (Figs. 2-6), one function each: the data reproduce.py computed go in; the figure and its plotted
-values come out. reproduce.py lists them in FIGURES under the paper's file names; check.py pins each one's page size,
-drawing, fonts, matplotlib version and plotted values.
+"""Regenerate the paper's five figures (Figs. 2-6) from IBM's public LLMFineTuningBench dataset into out/, under the
+paper's file names. ./reproduce.sh installs the pinned packages and runs this script.
 
-The paper's PDFs were drawn with matplotlib 3.11.0 in Times New Roman (regular and bold, embedded as TrueType). With
-both, these functions draw the paper's figures object for object (check.py compares every object but the font
-program). Another build of Times New Roman changes the embedded font program: Debian's ttf-mscorefonts-installer
-(font version 2.82, used by the Docker image) has the same glyph outlines and advance widths as the paper's font
-(version 5.01) but other hinting instructions, so its PDFs render pixel for pixel like the paper's, except in
-renderers that apply the hinting at screen resolution (e.g. Ghostscript below about 120 dpi: a few pixels of some
-letters). matplotlib 3.10 lays out text differently (labels move by up to 1.7 pt), and without Times New Roman
-matplotlib would silently draw in another font, so render() refuses to draw without it.
+Data: the dataset on the Hugging Face Hub (ibm-research/LLMFineTuningBench, Apache-2.0, IBM Research), loaded as its
+page shows. If that fails (no network, the dataset moved) or the Hub no longer serves the table the paper analyzed,
+the snapshot of its file in data/ado-sfttrainer.csv. The script prints which of the two it used.
+
+The paper's figures were drawn with matplotlib 3.11.0 in Times New Roman (regular and bold, embedded as TrueType);
+with both, this script draws them identically. matplotlib 3.10 places the text up to 1.7 pt elsewhere, and without
+Times New Roman matplotlib would silently draw in another font, so render() refuses to draw without it.
+
+Definitions
+- Outcome (Fig. 2). Valid: is_valid == 1. An invalid experiment was rejected before launch (never started) if its
+  configuration breaks a validation rule of the actuator: the number of GPUs does not divide the total batch size,
+  the expert-parallel degree does not divide the number of GPUs, or the number of nodes does not divide the number
+  of GPUs. Every other invalid experiment failed at runtime. The failure ratio counts both.
+- Throughput (Figs. 3-5): dataset_tokens_per_second of a valid run (all GPUs of the job together).
+- Matched pair (Fig. 6): the valid runs of one configuration with and without an optimization. All other
+  configuration columns, the settings recorded only in the identifier (`hidden`) and the protocol (experiment_id
+  without the optimization's own token) are equal. A pair's speedup divides the median throughputs of its two arms;
+  a bar is the median over pairs, its whisker the interquartile range.
+- RoCE (Fig. 6a): the only two campaigns that ran multi-node jobs both with and without RoCE disagree, so they are
+  shown apart. fms-hf-tuning 2.4.0 runs without a time limit; 2.7.1 stops every run after stop_after_seconds (600 s).
 """
-import hashlib
+import re
+import sys
+import warnings
 from contextlib import contextmanager
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")                         # other backends write narrower PDFs than declared
@@ -21,10 +35,186 @@ import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+import pandas as pd
 from matplotlib import font_manager
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch, Rectangle
+
+HERE = Path(__file__).resolve().parent
+SNAPSHOT, OUT = HERE / "data" / "ado-sfttrainer.csv", HERE / "out"
+if matplotlib.__version__ != "3.11.0":
+    print(f"warning: matplotlib {matplotlib.__version__}; the paper's figures were drawn with 3.11.0, which this "
+          "script needs to draw them identically (./reproduce.sh installs it)", file=sys.stderr)
+
+# ── data: the public dataset, loaded as its Hub page shows (Use this dataset); else the snapshot ─────────────────────
+warnings.filterwarnings("ignore", message="The 'verbose' keyword in pd.read_csv is deprecated")  # datasets 2.13 uses it
+snapshot = pd.read_csv(SNAPSHOT)
+try:
+    import datasets
+    datasets.disable_progress_bar()          # its row counter is throttled (it stops at 30,000); rows are counted below
+    datasets.logging.set_verbosity_error()
+    from datasets import load_dataset
+    ds = load_dataset("ibm-research/LLMFineTuningBench")
+    (split,) = ds.values()                   # the dataset's only split
+    df = split.to_pandas()
+    pd.testing.assert_frame_equal(df, snapshot, check_dtype=False, check_exact=True)   # the table the paper analyzed
+    source = "the Hugging Face Hub (ibm-research/LLMFineTuningBench)"
+except Exception as error:                   # no network, the dataset moved or changed
+    df = snapshot
+    why = ("its table differs from the snapshot" if isinstance(error, AssertionError)
+           else f"{type(error).__name__}: {' '.join(str(error).split())[:200]}")
+    source = f"the snapshot data/ado-sfttrainer.csv (the Hugging Face Hub failed: {why})"
+print(f"data: {len(df):,} rows x {df.shape[1]} columns from {source}")
+
+TPS = "dataset_tokens_per_second"
+GPU = {"NVIDIA-A100-SXM4-80GB": "A100-SXM", "NVIDIA-A100-80GB-PCIe": "A100-PCIe", "L40S": "L40S",
+       "NVIDIA-H100-PCIe": "H100-PCIe"}                                    # label per GPU type, in Table 1 order
+METHOD = {"full": "Full", "lora": "LoRA", "gptq-lora": "GPTQ-LoRA"}
+
+# ── derived columns ─────────────────────────────────────────────────────────────────────────────────────────────────
+assert (df.number_gpus >= 1).all() and set(df.gpu_model) == set(GPU)
+df["gpu"] = df.gpu_model.map(GPU)
+ep = df.fast_moe.fillna(0)
+rejected = ((df.batch_size % df.number_gpus != 0)                          # the GPUs do not divide the total batch
+            | ((ep > 0) & (df.number_gpus % ep.where(ep > 0, 1) != 0))      # the EP degree does not divide the GPUs
+            | (df.number_gpus % df.number_nodes != 0))                      # the nodes do not divide the GPUs
+df["outcome"] = np.select([df.is_valid == 1, rejected], ["valid", "rejected"], "runtime")
+
+# Settings recorded only in the identifier ('key.value' pairs joined by '-'), as one matching key.
+# HYBRID_SHARD on one node is FULL_SHARD (the actuator documents them as equivalent there).
+ID_KEYS = ("dataset_id", "model_name", "number_gpus", "model_max_length", "torch_dtype", "batch_size",
+           "gpu_model", "number_nodes", "fast_moe", "enable_roce", "fsdp_sharding_strategy",
+           "fsdp_state_dict_type", "fsdp_use_orig_params", "accelerate_config_mixed_precision",
+           "gradient_accumulation_steps", "optim", "gradient_checkpointing_use_reentrant", "fast_kernels", "r",
+           "lora_alpha", "distributed_backend")
+HIDDEN = ("fsdp_sharding_strategy", "fsdp_use_orig_params", "accelerate_config_mixed_precision",
+          "gradient_accumulation_steps", "optim", "gradient_checkpointing_use_reentrant", "dataset_id")
+KEY_START = re.compile(r"-(?=(?:%s)\.)" % "|".join(ID_KEYS))                # a '-' that starts a known key
+
+
+def hidden(identifier, nodes):
+    kv = dict(part.split(".", 1) for part in KEY_START.split(identifier) if "." in part)
+    h = [kv.get(k, "NA") for k in HIDDEN]
+    if h[0] in ("NA", "FULL_SHARD") or (h[0] == "HYBRID_SHARD" and nodes == 1):
+        h[0] = "FULL"
+    return "|".join(h)
+
+
+df["hidden"] = [hidden(i, n) for i, n in zip(df.identifier, df.number_nodes)]
+V = df[df.outcome == "valid"]
+
+
+# ── Fig. 2: failure ratio per batch size, sequence length, GPU type and fine-tuning method ─────────────────────────
+def failure_table(key):
+    """Experiments, valid ones, failing ones (rejected + runtime) and rejected ones per value of key."""
+    c = pd.crosstab(key, df.outcome).reindex(columns=["valid", "rejected", "runtime"], fill_value=0)
+    return pd.DataFrame({"runs": c.sum(axis=1), "valid": c.valid, "failing": c.rejected + c.runtime,
+                         "rejected": c.rejected})
+
+
+FAIL = {"batch": failure_table(df.batch_size.astype(int)), "seq": failure_table(df.tokens_per_sample.astype(int)),
+        "gpu": failure_table(df.gpu), "method": failure_table(df.method.map(METHOD))}
+# per panel, bottom to top (batch sizes in order, the other panels by increasing failure ratio)
+FIG2_LABEL = {"batch": str, "seq": str,
+              "gpu": {"A100-SXM": "A100\nSXM", "A100-PCIe": "A100\nPCIe", "H100-PCIe": "H100\nPCIe",
+                      "L40S": "L40S"}.get,
+              "method": {"Full": "Full", "LoRA": "LoRA", "GPTQ-LoRA": "GPTQ"}.get}
+FIG2 = {}
+for panel, t in FAIL.items():
+    if panel != "batch":
+        t = t.iloc[np.argsort((1 - t.valid.to_numpy() / t.runs.to_numpy()) * 100, kind="stable")]
+    FIG2[panel] = {"label": [FIG2_LABEL[panel](k) for k in t.index], "runs": t.runs.astype(int).tolist(),
+                   "failing": t.failing.astype(int).tolist(), "rejected": t.rejected.astype(int).tolist()}
+
+# ── Fig. 3: median throughput per batch size, one GPU, per GPU type ──────────────────────────────────────────────────
+ONE = V[V.number_gpus == 1]
+FIG3 = {}
+for g, lab in GPU.items():
+    tps = ONE[ONE.gpu_model == g].groupby("batch_size")[TPS].median()
+    FIG3[lab] = {"batch_size": tps.index.astype(int).tolist(), "median_tps": tps.tolist()}
+
+# ── Fig. 4: median throughput per batch size and sequence length ────────────────────────────────────────────────────
+BATCHES, SEQS = (sorted(int(v) for v in df[c].unique()) for c in ("batch_size", "tokens_per_sample"))
+cell = lambda d: [d.batch_size.astype(int), d.tokens_per_sample.astype(int)]
+grid = lambda s: s.unstack().reindex(index=BATCHES, columns=SEQS)
+med = grid(V.groupby(cell(V))[TPS].median())
+n_all = grid(df.groupby(cell(df)).size()).fillna(0)
+FIG4 = {"batch_size": BATCHES, "sequence_length": SEQS,
+        "median_tps": [[None if np.isnan(x) else float(x) for x in row] for row in med.to_numpy(float)],
+        "experiments": n_all.astype(int).to_numpy().tolist()}
+
+# ── Fig. 5: median throughput per number of GPUs, per fine-tuning method ─────────────────────────────────────────────
+FIG5 = {}
+for m, label in METHOD.items():
+    tps = V[V.method == m].groupby("number_gpus")[TPS].median()
+    FIG5[label] = {"number_gpus": tps.index.astype(int).tolist(), "median_tps": tps.tolist()}
+
+# ── Fig. 6: speedup of RoCE, Fast MoE and Fast Kernels over matched pairs ───────────────────────────────────────────
+CONFIG = ["model_name", "method", "gpu_model", "number_gpus", "number_nodes", "tokens_per_sample", "batch_size",
+          "enable_roce", "fast_moe", "fast_kernels", "fms_hf_tuning_version", "torch_dtype", "hidden"]
+TOKENS = {  # tokens that encode an optimization inside experiment_id; removed so the rest of the protocol matches
+    "enable_roce": [r"-enable_roce\.[^-]+"],
+    "fast_kernels": [r"-fast_kernels\.\[[^\]]*\]"],
+}
+
+
+def protocol(exp_id, factor):
+    for pattern in TOKENS.get(factor, []):
+        exp_id = re.sub(pattern, "", exp_id)
+    return exp_id
+
+
+def speedup(d, factor, a, b):
+    """Median throughput at factor == b over that at factor == a, one ratio per matched pair."""
+    d = d[d.outcome == "valid"].copy()
+    for c in ("fast_kernels", "fms_hf_tuning_version", "torch_dtype"):
+        d[c] = d[c].fillna("none").astype(str)
+    d[["fast_moe", "enable_roce"]] = d[["fast_moe", "enable_roce"]].fillna(0)
+    d["protocol"] = d.experiment_id.map(lambda e: protocol(e, factor))
+    keys = [c for c in CONFIG if c != factor] + ["protocol"]
+    arm = lambda v: d[d[factor] == v].groupby(keys, dropna=False)[TPS].median()
+    j = pd.concat([arm(a).rename("a"), arm(b).rename("b")], axis=1, join="inner")
+    return j.b / j.a
+
+
+def level(r, key):
+    """The value of one configuration column for each pair of r."""
+    return r.index.get_level_values(key)
+
+
+multi = df.number_nodes > 1
+both = df[multi].groupby("experiment_id").enable_roce.nunique() == 2
+C = df[df.experiment_id.isin(both[both].index)]                    # the two RoCE campaigns, by fms-hf-tuning version
+LIMIT = {v: C.experiment_id[C.fms_hf_tuning_version == v].str.extract(r"-stop_after_seconds\.([\d.]+)",
+                                                                       expand=False).astype(float)
+         for v in ("2.4.0", "2.7.1")}                              # [s] the time limit in the experiment_id, if any
+assert LIMIT["2.4.0"].isna().all() and LIMIT["2.7.1"].notna().all() and LIMIT["2.7.1"].nunique() == 1
+CAP = LIMIT["2.7.1"].iloc[0]
+roce = speedup(df[multi], "enable_roce", 0, 1)
+version = level(roce, "fms_hf_tuning_version")
+assert set(version) == set(LIMIT), "RoCE pairs outside the two campaigns"
+ra, rb = roce[version == "2.4.0"], roce[version == "2.7.1"]
+
+EP = sorted(int(e) for e in V.fast_moe.dropna().unique() if e > 0)   # expert-parallel degrees with valid runs
+moe = {e: speedup(df, "fast_moe", 0, e) for e in EP}
+by_ep = lambda m: {e: r[level(r, "method") == m] for e, r in moe.items()}
+moe_full, moe_lora = by_ep("full"), by_ep("lora")
+
+kernels = speedup(df.assign(fast_kernels=np.where(df.fast_kernels.notna(), "on", "off")), "fast_kernels", "off", "on")
+
+
+def fig6_bar(group, label, r):
+    """One bar of Fig. 6: its matched ratios' count and quartiles."""
+    return {"group": group, "label": label, "n": len(r), "p25": float(r.quantile(0.25)), "p50": float(r.median()),
+            "p75": float(r.quantile(0.75))}
+
+
+FIG6 = [fig6_bar("RoCE", "no time limit", ra), fig6_bar("RoCE", f"{CAP:g} s limit", rb),
+        *(fig6_bar("Fast MoE", f"{m}, EP {e}", r[e]) for m, r in (("Full", moe_full), ("LoRA", moe_lora)) for e in EP),
+        fig6_bar("Fast Kernels", "all pairs", kernels)]
+
+# ═════ drawing: one function per figure; the data computed above go in, the figure comes out ══════════════════════
 
 FONT = "Times New Roman"
 FONT_FILES = {"normal": "TimesNewRomanPSMT", "bold": "TimesNewRomanPS-BoldMT"}  # PostScript names in the paper's PDFs
@@ -99,16 +289,16 @@ def require_fonts():
         if found != ps_name:
             raise RuntimeError(f"the paper's figures need {FONT} ({weight}, {ps_name}); found {found or 'none'}. "
                                "macOS ships it; on Debian or Ubuntu install ttf-mscorefonts-installer (contrib, "
-                               "multiverse), then delete matplotlib's font cache (make clean)")
+                               "multiverse), then delete matplotlib's font cache (.venv/matplotlib, as reproduce.sh "
+                               "sets it)")
 
 
 def render(draw, data, pdf):
-    """Draw one figure into pdf; return the file's SHA-256 and the plotted values."""
+    """Draw one figure into pdf."""
     require_fonts()
-    fig, plotted = draw(data)
-    fig.savefig(pdf, metadata={"CreationDate": None})
+    fig = draw(data)
+    fig.savefig(pdf, metadata={"CreationDate": None})          # no date: the same data give the same file
     plt.close(fig)
-    return hashlib.sha256(pdf.read_bytes()).hexdigest(), plotted
 
 
 def square_legend(leg):
@@ -194,7 +384,7 @@ def failures(data):
                             Patch(facecolor=RED, edgecolor="black", label="failed at runtime")],
                    loc="lower right", bbox_to_anchor=(0.97, -0.03), ncol=2, frameon=False, fontsize=7,
                    handlelength=1.6)
-    return fig, data
+    return fig
 
 
 # ── Figs. 3 and 5: median throughput per batch size (one GPU) and per number of GPUs ─────────────────────────────────
@@ -242,7 +432,7 @@ def _line_axes(fig, ax, xlim, ylim, xticks, xlabels, yticks, xlabel, ncol):
 
 def batch(data):
     """Fig. 3 (240.04 x 100.8 pt): median throughput of the valid one-GPU runs per total batch size, one line per GPU
-    type. data: GPU label -> batch sizes, median throughputs [tokens/s] and runs, in Table 1 order."""
+    type. data: GPU label -> batch sizes and median throughputs [tokens/s], in Table 1 order."""
     xlim, ylim, ticks = (0.8, 128 * 1.25), (0, 10_000), [2 ** k for k in range(8)]      # batch sizes 1 .. 128
     with styled(COLUMN) as fig_class:
         fig, ax = _line_figure(fig_class)
@@ -250,13 +440,13 @@ def batch(data):
                {"A100-SXM": "o", "A100-PCIe": "s", "L40S": "D", "H100-PCIe": "^"}, xlim, ylim)
         _line_axes(fig, ax, xlim, ylim, ticks, [f"{t:,}" for t in ticks], [0, 2_500, 5_000, 7_500, 10_000],
                    "Batch Size [#]", ncol=4)
-    return fig, data
+    return fig
 
 
 def scaling(data):
     """Fig. 5 (240.04 x 100.8 pt): median throughput of the valid runs per number of GPUs, one line per fine-tuning
     method (not matched). The dashed line marks the node boundary (8 GPUs per node). data: method label -> GPU
-    counts, median throughputs [tokens/s] and runs, in legend order."""
+    counts and median throughputs [tokens/s], in legend order."""
     xlim, ylim, ticks = (0.8, 40), (0, 36_000), [1, 2, 4, 8, 16, 32]
     boundary = 8 * 2 ** 0.12                   # just right of 8 GPUs (1 node); 16 GPUs need 2 nodes
     with styled(COLUMN) as fig_class:
@@ -269,7 +459,7 @@ def scaling(data):
         ax.text(boundary * 1.12, 1_300, "2–4 nodes", ha="left", **kw)
         _line_axes(fig, ax, xlim, ylim, ticks, [str(t) for t in ticks], [0, 10_000, 20_000, 30_000],
                    "Number of GPUs [#]", ncol=3)
-    return fig, data
+    return fig
 
 
 # ── Fig. 4: median throughput per batch size and sequence length ──────────────────────────────────────────────────────
@@ -287,8 +477,8 @@ def compact(v):
 
 def heatmap(data):
     """Fig. 4 (240.04 x 115.2 pt). data: batch sizes (rows), sequence lengths (columns), and per cell the median
-    throughput of the valid runs [tokens/s] (None: no valid run), the valid runs and the experiments. A cell with
-    experiments but no valid run is blank with a grey outline; a cell without experiments is hatched."""
+    throughput of the valid runs [tokens/s] (None: no valid run) and the experiments. A cell with experiments but no
+    valid run is blank with a grey outline; a cell without experiments is hatched."""
     batch_sizes, seq = data["batch_size"], data["sequence_length"]
     m = np.array([[np.nan if v is None else v for v in row] for row in data["median_tps"]], dtype=float)
     nall = data["experiments"]
@@ -346,8 +536,7 @@ def heatmap(data):
         fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.745, (b_in - 0.03) / H), ncol=1,
                    handlelength=1.1, handleheight=1.0, handletextpad=0.4, borderpad=0.35,
                    labelspacing=0.35, fontsize=fs_small, frameon=False)
-    labels = [["" if np.isnan(x) else compact(x) for x in row] for row in m]
-    return fig, {**data, "cell_label": labels}
+    return fig
 
 
 # ── Fig. 6: speedup of RoCE, Fast MoE and Fast Kernels over matched pairs ─────────────────────────────────────────────
@@ -400,4 +589,18 @@ def speedups(rows):
         axes[-1].set_xlim(0, SPEED_XMAX)
         axes[-1].set_xticks([0, 1, 2, 3], ["0", "1", "2", "3"])
         axes[-1].set_xlabel("Speedup [×]")
-    return fig, rows
+    return fig
+
+
+# ── write the figures under the paper's file names, in its order (Figs. 2-6) ────────────────────────────────────────
+FIGURES = {
+    "00_failure_rates_by_category": (failures, FIG2),
+    "03_performance_vs_batch_size": (batch, FIG3),
+    "08_workload_characteristics": (heatmap, FIG4),
+    "03_insights_method_scaling": (scaling, FIG5),
+    "07_optimization_roi": (speedups, FIG6),
+}
+OUT.mkdir(exist_ok=True)
+for name, (draw, data) in FIGURES.items():
+    render(draw, data, OUT / f"{name}.pdf")
+print(f"wrote {len(FIGURES)} figures to out/: " + ", ".join(f"{name}.pdf" for name in FIGURES))
