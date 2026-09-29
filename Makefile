@@ -1,6 +1,8 @@
 # `make reproducibility` regenerates every dataset-derived number, table and figure of the paper and checks them
-# against the paper.
-PYTHON ?= $(shell for p in python3.11 python3.10; do command -v $$p && break; done)
+# against the paper. It needs Python 3.11 and the font Times New Roman, regular and bold, in which the figures are set:
+# macOS ships it; on Debian or Ubuntu, install ttf-mscorefonts-installer, then run `make clean` (matplotlib caches the
+# list of fonts it found).
+PYTHON ?= $(shell command -v python3.11)
 VENV := .venv
 PY := $(VENV)/bin/python
 
@@ -29,7 +31,7 @@ docker:
 
 # The venv is built from the resolved interpreter: one reached through a symlink can lose its stdlib.
 $(VENV)/.installed: requirements.txt
-	@test -n "$(PYTHON)" || { echo "Needs Python 3.10 or 3.11: make PYTHON=/path/to/python3.11"; exit 1; }
+	@test -n "$(PYTHON)" || { echo "Needs Python 3.11: make PYTHON=/path/to/python3.11"; exit 1; }
 	"$$($(PYTHON) -c 'import os, sys; print(os.path.realpath(sys.executable))')" -m venv $(VENV)
 	$(PY) -m pip install --quiet --disable-pip-version-check -r requirements.txt
 	touch $@

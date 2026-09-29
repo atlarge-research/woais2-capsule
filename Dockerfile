@@ -9,7 +9,18 @@ ENV MPLBACKEND=Agg \
     DATASETS_VERBOSITY=error \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore
+
+# The figures are set in Times New Roman, regular and bold, which Debian ships in ttf-mscorefonts-installer (archive
+# area contrib). Installing it accepts the Microsoft core fonts licence (EULA) and downloads the fonts from SourceForge.
+RUN sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/debian.sources \
+ && echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections \
+ && apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ttf-mscorefonts-installer \
+ && rm -rf /var/lib/apt/lists/* \
+ && test -f /usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf \
+ && test -f /usr/share/fonts/truetype/msttcorefonts/Times_New_Roman_Bold.ttf
 
 WORKDIR /capsule
 COPY requirements.txt .
