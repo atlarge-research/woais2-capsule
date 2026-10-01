@@ -1,6 +1,6 @@
 # Docker image of the capsule: Python 3.11, the font Times New Roman and the pinned packages, all included.
 #   docker build -t woais2 .
-#   docker run --rm -v "$PWD/out:/capsule/out" woais2
+#   docker run --rm -v ./out:/capsule/out woais2
 FROM python:3.11.16-slim-trixie@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
 
 # Times New Roman: Microsoft's core fonts, from Debian's contrib section

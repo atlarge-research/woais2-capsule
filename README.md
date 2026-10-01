@@ -10,7 +10,7 @@ Needs Docker, running. In a terminal:
 curl -L -o woais2.zip https://anonymous.4open.science/api/repo/woais2/zip
 mkdir woais2 && cd woais2 && unzip -q ../woais2.zip
 docker build -t woais2 .
-docker run --rm -v "$PWD/out:/capsule/out" woais2
+docker run --rm -v ./out:/capsule/out woais2
 ```
 
 The figures are in `out/`.
