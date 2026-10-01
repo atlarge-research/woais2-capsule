@@ -1,5 +1,5 @@
 """Regenerate the paper's five figures (Figs. 2-6) from IBM's public LLMFineTuningBench dataset into out/, under the
-paper's file names. ./reproduce.sh installs the pinned packages and runs this script.
+paper's file names. bash reproduce.sh installs the pinned packages and runs this script.
 
 Data: the dataset on the Hugging Face Hub (ibm-research/LLMFineTuningBench, Apache-2.0, IBM Research), loaded as its
 page shows. If that fails (no network, the dataset moved) or the Hub no longer serves the table the paper analyzed,
@@ -45,7 +45,7 @@ HERE = Path(__file__).resolve().parent
 SNAPSHOT, OUT = HERE / "data" / "ado-sfttrainer.csv", HERE / "out"
 if matplotlib.__version__ != "3.11.0":
     print(f"warning: matplotlib {matplotlib.__version__}; the paper's figures were drawn with 3.11.0, which this "
-          "script needs to draw them identically (./reproduce.sh installs it)", file=sys.stderr)
+          "script needs to draw them identically (bash reproduce.sh installs it)", file=sys.stderr)
 
 # ── data: the public dataset, loaded as its Hub page shows (Use this dataset); else the snapshot ─────────────────────
 warnings.filterwarnings("ignore", message="The 'verbose' keyword in pd.read_csv is deprecated")  # datasets 2.13 uses it

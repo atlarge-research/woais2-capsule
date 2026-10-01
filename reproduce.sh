@@ -2,7 +2,7 @@
 # Regenerates the paper's five figures into out/: creates a Python virtual environment in .venv/, installs the pinned
 # packages into it and runs plot.py.
 #
-# Needs Python 3.11 (python3.11 on the PATH, or PYTHON=/path/to/python3.11 ./reproduce.sh): the pinned pyarrow 12.0.1
+# Needs Python 3.11 (python3.11 on the PATH, or PYTHON=/path/to/python3.11 bash reproduce.sh): the pinned pyarrow 12.0.1
 # has no wheels for later versions, and matplotlib 3.11 none for earlier ones.
 # Needs the font Times New Roman, regular and bold, in which the figures are set: macOS ships it; on Debian/Ubuntu,
 # install ttf-mscorefonts-installer (then delete .venv/matplotlib, matplotlib's list of the fonts it found).
@@ -12,7 +12,7 @@ cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
     PYTHON="${PYTHON:-python3.11}"
     "$PYTHON" -c 'import sys; sys.exit(sys.version_info[:2] != (3, 11))' 2> /dev/null \
-        || { echo "needs Python 3.11: PYTHON=/path/to/python3.11 ./reproduce.sh" >&2; exit 1; }
+        || { echo "needs Python 3.11: put python3.11 on the PATH, or run PYTHON=/path/to/python3.11 bash reproduce.sh" >&2; exit 1; }
     # from the resolved interpreter: a venv made through a symlink to it can lose its standard library
     "$("$PYTHON" -c 'import os, sys; print(os.path.realpath(sys.executable))')" -m venv .venv
 fi
