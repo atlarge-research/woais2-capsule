@@ -13,7 +13,7 @@ docker build -t woais2 .
 docker run --rm -v "$PWD/out:/capsule/out" woais2
 ```
 
-The figures are in `out/` (on macOS: `open out`).
+The figures are in `out/`.
 
 Without Docker: `bash reproduce.sh` (needs Python 3.11 and the font Times New Roman).
 
