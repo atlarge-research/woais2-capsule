@@ -1,5 +1,6 @@
-"""Regenerate the paper's five figures (Figs. 2-6) from IBM's public LLMFineTuningBench dataset into out/, under the
-paper's file names. bash reproduce.sh installs the pinned packages and runs this script.
+"""Regenerate the paper's five figures (Figs. 2-6) from IBM's public LLMFineTuningBench dataset into out/, one PDF per
+figure, named after its number in the paper (fig2_*.pdf to fig6_*.pdf). bash reproduce.sh installs the pinned packages
+and runs this script.
 
 Data: the dataset on the Hugging Face Hub (ibm-research/LLMFineTuningBench, Apache-2.0, IBM Research), loaded as its
 page shows. If that fails (no network, the dataset moved) or the Hub no longer serves the table the paper analyzed,
@@ -592,13 +593,13 @@ def speedups(rows):
     return fig
 
 
-# ── write the figures under the paper's file names, in its order (Figs. 2-6) ────────────────────────────────────────
+# ── write the figures, named after their number in the paper (Figs. 2-6) ──────────────────────────────────────────────
 FIGURES = {
-    "00_failure_rates_by_category": (failures, FIG2),
-    "03_performance_vs_batch_size": (batch, FIG3),
-    "08_workload_characteristics": (heatmap, FIG4),
-    "03_insights_method_scaling": (scaling, FIG5),
-    "07_optimization_roi": (speedups, FIG6),
+    "fig2_failure_ratios": (failures, FIG2),
+    "fig3_throughput_vs_batch_size": (batch, FIG3),
+    "fig4_throughput_heatmap": (heatmap, FIG4),
+    "fig5_gpu_scaling": (scaling, FIG5),
+    "fig6_optimization_speedups": (speedups, FIG6),
 }
 OUT.mkdir(exist_ok=True)
 for name, (draw, data) in FIGURES.items():
